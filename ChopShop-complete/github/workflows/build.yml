@@ -1,0 +1,66 @@
+name: Build installers
+on:
+  push:
+  workflow_dispatch:
+
+# AAX: put the Avid AAX SDK in a folder named  aax-sdk/  at the repo root
+# (use a PRIVATE repo - Avid's license forbids publishing the SDK).
+# If aax-sdk/ is absent, only VST3 is built.
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure (VST3 + AAX)
+        if: hashFiles('aax-sdk/**') != ''
+        run: cmake -B build -G "Visual Studio 17 2022" -A x64 "-DAAX_SDK_PATH=${{ github.workspace }}/aax-sdk"
+      - name: Configure (VST3 only)
+        if: hashFiles('aax-sdk/**') == ''
+        run: cmake -B build -G "Visual Studio 17 2022" -A x64
+      - name: Build
+        run: cmake --build build --config Release
+      - run: choco install innosetup -y
+      - name: Installer - VST3 only
+        if: hashFiles('aax-sdk/**') == ''
+        run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\ChopShop.iss'
+      - name: Installers - VST3+AAX and AAX only
+        if: hashFiles('aax-sdk/**') != ''
+        run: |
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DHasAAX installer\ChopShop.iss
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DHasAAX /DAAXOnly installer\ChopShop.iss
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ChopShop-Windows-Installers
+          path: installer/*.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ChopShop-Windows-plugins-manual
+          path: build/ChopShop_artefacts/Release/
+
+  mac:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure (VST3 + AAX)
+        if: hashFiles('aax-sdk/**') != ''
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release "-DAAX_SDK_PATH=${{ github.workspace }}/aax-sdk"
+      - name: Configure (VST3 only)
+        if: hashFiles('aax-sdk/**') == ''
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build --config Release -j
+      - name: Installers (.pkg)
+        run: |
+          ./installer/build_mac_pkg.sh
+          if [ -d build/ChopShop_artefacts/Release/AAX/ChopShop.aaxplugin ]; then AAX_ONLY=1 ./installer/build_mac_pkg.sh; fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ChopShop-Mac-Installers
+          path: installer/*.pkg
+      - name: Zip plugins for manual install
+        run: cd build/ChopShop_artefacts/Release && ditto -c -k --keepParent . "$GITHUB_WORKSPACE/ChopShop-Mac-plugins.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ChopShop-Mac-plugins-manual
+          path: ChopShop-Mac-plugins.zip
